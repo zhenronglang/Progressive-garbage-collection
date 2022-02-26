@@ -45,15 +45,17 @@ namespace SSD_Components
 		if (free_block_pool_size < block_pool_gc_threshold) {
 			flash_block_ID_type gc_candidate_block_id = block_manager->Get_coldest_block_id(plane_address);
 			PlaneBookKeepingType* pbke = block_manager->Get_plane_bookkeeping_entry(plane_address);
-
-			if (pbke->Ongoing_erase_operations.size() >= max_ongoing_gc_reqs_per_plane) {
+			
+			//PGC - Avoid data race
+			if (pbke->Ongoing_erase_operations.size() > 0) {
 				return;
 			}
 
 			switch (block_selection_policy) {
 				case SSD_Components::GC_Block_Selection_Policy_Type::GREEDY://Find the set of blocks with maximum number of invalid pages and no free pages
 				{
-					gc_candidate_block_id = 0;
+					//PGC - Bug fix
+					gc_candidate_block_id = 1;
 					if (pbke->Ongoing_erase_operations.find(0) != pbke->Ongoing_erase_operations.end()) {
 						gc_candidate_block_id++;
 					}
@@ -134,7 +136,7 @@ namespace SSD_Components
 			if (pbke->Ongoing_erase_operations.find(gc_candidate_block_id) != pbke->Ongoing_erase_operations.end()) {
 				return;
 			}
-			
+
 			NVM::FlashMemory::Physical_Page_Address gc_candidate_address(plane_address);
 			gc_candidate_address.BlockID = gc_candidate_block_id;
 			Block_Pool_Slot_Type* block = &pbke->Blocks[gc_candidate_block_id];

@@ -56,6 +56,9 @@ private:
     int **currentWeightRead;
     int **currentWeightWrite;
 
+    //PGC - New member variable
+    Transaction_Source_Type MostRecentTRType;
+
     bool service_read_transaction(NVM::FlashMemory::Flash_Chip *chip);
     bool service_write_transaction(NVM::FlashMemory::Flash_Chip *chip);
     bool service_erase_transaction(NVM::FlashMemory::Flash_Chip *chip);

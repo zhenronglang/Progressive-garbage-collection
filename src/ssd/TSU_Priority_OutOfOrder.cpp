@@ -41,6 +41,10 @@ TSU_Priority_OutOfOrder::TSU_Priority_OutOfOrder(const sim_object_id_type &id,
     nextPriorityClassWrite = new IO_Flow_Priority_Class::Priority * [channel_count];
     currentWeightRead = new int* [channel_count];
     currentWeightWrite = new int *[channel_count];
+
+    //PGC - For the alternative switch implementation
+    MostRecentTRType = Transaction_Source_Type::USERIO;
+
     for (unsigned int channelID = 0; channelID < channel_count; channelID++)
     {
         UserReadTRQueue[channelID] = new Flash_Transaction_Queue *[chip_no_per_channel];
@@ -374,28 +378,63 @@ bool TSU_Priority_OutOfOrder::service_read_transaction(NVM::FlashMemory::Flash_C
             }
         }
     }
+    //PGC - Modified read scheduling policy
     else
     {
-        //If GC is currently executed in the preemptive mode, then user IO transaction queues are checked first
         sourceQueue1 = get_next_read_service_queue(chip);
-        if (sourceQueue1 != NULL)
+        //PGC - If the most recent transaction type is GC_WL, then user IO trascation queues are checked first
+        if (MostRecentTRType == Transaction_Source_Type::GC_WL) 
         {
-            if (GCReadTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+            if (sourceQueue1 != NULL) 
             {
-                sourceQueue2 = &GCReadTRQueue[chip->ChannelID][chip->ChipID];
+                if (GCReadTRQueue[chip->ChannelID][chip->ChipID].size() > 0) 
+                {
+                    sourceQueue2 = &GCReadTRQueue[chip->ChannelID][chip->ChipID];
+                    MostRecentTRType = Transaction_Source_Type::USERIO;
+                }
+            }
+            else if (get_next_write_service_queue(chip) != NULL)
+            {
+                return false;
+            }
+            //PGC - There is no user IO, the chip is idle, GC can be performed
+            else if (GCReadTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+            {
+                sourceQueue1 = &GCReadTRQueue[chip->ChannelID][chip->ChipID];
+            }
+            //PGC - There is no request at all
+            else
+            {
+                return false;
             }
         }
-        else if (get_next_write_service_queue(chip) != NULL)
+        //PGC - The most recent trasaction type is not GC_WL, GC will be executed first
+        else 
         {
-            return false;
-        }
-        else if (GCReadTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
-        {
-            sourceQueue1 = &GCReadTRQueue[chip->ChannelID][chip->ChipID];
-        }
-        else
-        {
-            return false;
+            if (sourceQueue1 != NULL)
+            {
+                //PGC - If there is GC to be executed, then user IO comes after GC
+                if (GCReadTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+                {
+                    sourceQueue2 = sourceQueue1;
+                    sourceQueue1 = &GCReadTRQueue[chip->ChannelID][chip->ChipID];
+                    MostRecentTRType = Transaction_Source_Type::GC_WL;
+                }
+            }
+            else if (get_next_write_service_queue(chip) != NULL)
+            {
+                return false;
+            }
+            //PGC - There is no user IO, the chip is idle, GC can be performed
+            else if (GCReadTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+            {
+                sourceQueue1 = &GCReadTRQueue[chip->ChannelID][chip->ChipID];
+                MostRecentTRType = Transaction_Source_Type::GC_WL;
+            }
+            else
+            {   
+                return false;
+            }
         }
     }
 
@@ -493,24 +532,56 @@ bool TSU_Priority_OutOfOrder::service_write_transaction(NVM::FlashMemory::Flash_
             }
         }
     }
+    //PGC - Modified write scheduling policy
     else
     {
-        //If GC is currently executed in the preemptive mode, then user IO transaction queues are checked first
         sourceQueue1 = get_next_write_service_queue(chip);
-        if (sourceQueue1 != NULL)
+        //PGC - If the most recent transaction type is GC_WL, then user IO trascation queues are checked first
+        if (MostRecentTRType == Transaction_Source_Type::GC_WL) 
         {
-            if (GCWriteTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+            if (sourceQueue1 != NULL)
             {
-                sourceQueue2 = &GCWriteTRQueue[chip->ChannelID][chip->ChipID];
+                if (GCWriteTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+                {
+                    sourceQueue2 = &GCWriteTRQueue[chip->ChannelID][chip->ChipID];
+                }
+                MostRecentTRType = Transaction_Source_Type::USERIO;
+            }
+            //PGC - There is no user IO, the chip is idle, GC can be performed
+            else if (GCWriteTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+            {
+                sourceQueue1 = &GCWriteTRQueue[chip->ChannelID][chip->ChipID];
+            }
+            //PGC - There is no request at all
+            else
+            {
+                return false;
             }
         }
-        else if (GCWriteTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+        //PGC - The most recent trasaction type is USER, GC will be executed first
+        else 
         {
-            sourceQueue1 = &GCWriteTRQueue[chip->ChannelID][chip->ChipID];
-        }
-        else
-        {
-            return false;
+            if (sourceQueue1 != NULL)
+            {
+                //PGC - If there is GC to be executed, then user IO comes after GC
+                if (GCWriteTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+                {
+                    sourceQueue2 = sourceQueue1;
+                    sourceQueue1 = &GCWriteTRQueue[chip->ChannelID][chip->ChipID];
+                    MostRecentTRType =  Transaction_Source_Type::GC_WL;
+		}
+            }
+            //PGC - There is no user IO, the chip is idle, GC can be performed
+            else if (GCWriteTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+            {
+                sourceQueue1 = &GCWriteTRQueue[chip->ChannelID][chip->ChipID];
+                MostRecentTRType = Transaction_Source_Type::GC_WL;
+            }
+            //PGC - There is no request at all
+            else
+            {
+                return false;
+            }
         }
     }
 
